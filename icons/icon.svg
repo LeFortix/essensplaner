@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#1b4332"/>
+  <rect x="44" y="44" width="424" height="424" rx="84" fill="#2d6a4f"/>
+  <!-- Schale -->
+  <path d="M118 268h276a10 10 0 0 1 10 11c-4 78-66 139-148 139s-144-61-148-139a10 10 0 0 1 10-11z" fill="#d8f3dc"/>
+  <path d="M118 268h276a10 10 0 0 1 10 11c-1 14-5 27-11 39H119c-6-12-10-25-11-39a10 10 0 0 1 10-11z" fill="#74c69d"/>
+  <!-- Blatt -->
+  <path d="M256 92c-58 30-86 86-64 162 76 14 134-30 142-108-28-8-54-26-78-54z" fill="#95d5b2"/>
+  <path d="M256 92c0 0-40 70-12 162" fill="none" stroke="#1b4332" stroke-width="13" stroke-linecap="round"/>
+  <path d="M232 168c12 6 26 8 40 6M252 220c14 4 30 2 44-6" fill="none" stroke="#1b4332" stroke-width="11" stroke-linecap="round"/>
+</svg>

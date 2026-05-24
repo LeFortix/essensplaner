@@ -1,0 +1,21 @@
+{
+  "name": "Essensplaner – Intelligentes Ernährungssystem",
+  "short_name": "Essensplaner",
+  "description": "Persönlicher Mahlzeitenplaner mit Meal Prep, Einkaufsliste, Vorrat und Fahrkostenrechner.",
+  "lang": "de",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#1b4332",
+  "theme_color": "#2d6a4f",
+  "categories": ["food", "lifestyle", "productivity"],
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
