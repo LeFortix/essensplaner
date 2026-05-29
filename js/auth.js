@@ -13,19 +13,22 @@ const Auth = {
 
   /* ---------- Start-Entscheidung ---------- */
   async boot() {
-    Data.loadLocal();                       // Cache sofort verfuegbar
+    Data.cleanupLegacyCache();              // einmalig alte, ungescopte Cache-Eintraege loeschen
+    Data.resetDB();                         // garantiert leerer Start
     const setup = localStorage.getItem(EP.SETUP_DONE_KEY);   // 'cloud' | 'local' | null
 
     if (!setup) { this.showSetup(); return; }
 
     if (setup === 'local') {
       Data.mode = 'local';
+      Data.loadLocal();                     // _local-Scope laden
       if (!DB.onboardingDone) { this.showOnboarding(); return; }
       this.enterApp();
       return;
     }
 
     // ----- Cloud-Modus -----
+    Data.mode = 'cloud';
     Data.initClient();
     if (!Data.client) {
       this.showSetup('Verbindung zu Supabase nicht möglich – bitte Zugangsdaten erneut eingeben.');
@@ -35,9 +38,8 @@ const Auth = {
       const { data: { session } } = await Data.client.auth.getSession();
       if (session) {
         Data.user = session.user;
-        await Data.pullAll();
-        // Fallback: localStorage gewinnt, falls Supabase-Sync noch aussteht
-        if (!DB.onboardingDone) DB.onboardingDone = !!lsGet('ep_onboarding');
+        Data.loadLocal();                   // Offline-Cache DIESES Users vorladen
+        await Data.pullAll();               // Cloud ist Quelle der Wahrheit
         if (!DB.onboardingDone) { this.showOnboarding(); return; }
         this.enterApp();
         return;
@@ -155,11 +157,13 @@ const Auth = {
 
           <div class="form-row">
             <label>E-Mail</label>
-            <input id="auth-email" type="email" placeholder="du@beispiel.de" autocomplete="email">
+            <input id="auth-email" type="email" name="username" placeholder="du@beispiel.de"
+                   autocomplete="username" autocorrect="off" autocapitalize="none" spellcheck="false">
           </div>
           <div class="form-row">
             <label>Passwort</label>
-            <input id="auth-pass" type="password" placeholder="••••••••" autocomplete="${isLogin ? 'current-password' : 'new-password'}"
+            <input id="auth-pass" type="password" name="${isLogin ? 'current-password' : 'new-password'}"
+                   placeholder="••••••••" autocomplete="${isLogin ? 'current-password' : 'new-password'}"
                    onkeydown="if(event.key==='Enter')Auth.${isLogin ? 'doLogin' : 'doRegister'}()">
           </div>
           <div id="auth-err" class="auth-error hidden"></div>
@@ -207,9 +211,12 @@ const Auth = {
     try {
       const { data, error } = await Data.client.auth.signInWithPassword({ email, password: pass });
       if (error) throw error;
+      // Frischer Start: KEINE Daten eines evtl. vorigen Users uebernehmen
+      Data.resetDB();
       Data.user = data.user;
-      await Data.pullAll();
-      if (!DB.onboardingDone) DB.onboardingDone = !!lsGet('ep_onboarding');
+      Data.mode = 'cloud';
+      Data.loadLocal();                     // Offline-Cache DIESES Users (falls da)
+      await Data.pullAll();                 // mit Cloud-Daten ueberschreiben
       if (!DB.onboardingDone) this.showOnboarding();
       else this.enterApp();
     } catch (e) {
@@ -230,7 +237,9 @@ const Auth = {
       if (error) throw error;
       if (data.session) {
         // E-Mail-Bestätigung im Projekt deaktiviert -> direkt rein
+        Data.resetDB();                     // frischer Account, keine Altlasten
         Data.user = data.user;
+        Data.mode = 'cloud';
         await Data.pullAll();
         this.showOnboarding();
       } else {
@@ -259,8 +268,15 @@ const Auth = {
     if (Data.client && Data.user) {
       try { await Data.flushQueue(); } catch {}
     }
+    // Scope merken, BEVOR wir den User entfernen
+    const prevScope = Data.user ? '_' + Data.user.id : null;
     if (Data.client) { try { await Data.client.auth.signOut(); } catch {} }
+    // Lokalen Cache DIESES Users hart loeschen, damit der naechste
+    // Nutzer auf demselben Browser NICHTS davon zu sehen bekommt.
+    if (prevScope) Data.clearScopedCache(prevScope);
     Data.user = null;
+    Data.mode = 'cloud';
+    Data.resetDB();                         // UI zeigt sofort Defaults
     this.showLogin();
   },
 
