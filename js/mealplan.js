@@ -608,36 +608,49 @@ function addPlanIngredientsToGroceries() {
   // Vorherige Plan-Zutaten entfernen → Button ist idempotent, keine endlosen "+"-Ketten
   DB.groceries = DB.groceries.filter((g) => !g.fromPlan);
 
-  const usedRids = new Set();
-  const ridMult = {};
+  // Kochsessions pro Rezept sammeln. Eine Kochsession = ein "frischer" Mahlzeit-
+  // Eintrag (m.reheated NICHT true) — Folgetage werden aus dieser Charge gegessen
+  // und brauchen KEINEN extra Einkauf. Zwei separate Meal-Preps desselben Rezepts
+  // (z.B. Woche 1 und Woche 2) sind ZWEI Sessions → zweimal einkaufen.
+  const sessionsByRid = {};   // rid -> [{ mult, portions }]
   DB.mealplan.forEach((d) => SLOTS.forEach((s) => {
     const m = d[s.k];
-    if (m && m.rid) { usedRids.add(m.rid); if (m.mult) ridMult[m.rid] = m.mult; }
+    if (!m || !m.rid) return;
+    if (m.reheated) return;
+    if (!sessionsByRid[m.rid]) sessionsByRid[m.rid] = [];
+    sessionsByRid[m.rid].push({ mult: m.mult || 1 });
   }));
+
   let added = 0, merged = 0;
-  usedRids.forEach((rid) => {
+  Object.entries(sessionsByRid).forEach(([rid, sessions]) => {
     const r = DB.recipes.find((x) => x.id === rid);
     if (!r) return;
-    const factor = (r.perPortion ? (r.portions || 1) : 1) * (ridMult[rid] || 1);
-    (r.ingredients || []).forEach((ing) => {
-      const name = translateFoodName(ing.n);
-      let amount = scaleAmount(ing.a, factor);
-      amount = _normalizeIngredientUnit(name, amount);
-      const key = foodKey(name);
-      const existing = DB.groceries.find((g) => foodKey(g.n) === key);
-      if (existing) {
-        existing.a = mergeAmounts(existing.a, amount);
-        merged++;
-      } else {
-        const store = guessStore(name);
-        DB.groceries.push({
-          id: uid(), n: name, a: amount, cat: guessCategory(name),
-          store, price: estimatePrice(name, store), checked: false, fromPlan: true,
-        });
-        added++;
-      }
+    // perPortion-Rezepte: Zutaten sind PRO Portion → mit Portionszahl skalieren.
+    // Klassische Batch-Rezepte (r1–r33): Zutaten sind fuer 1 Kochsession.
+    const sessionBase = r.perPortion ? (r.portions || 1) : 1;
+    sessions.forEach((sess) => {
+      const factor = sessionBase * (sess.mult || 1);
+      (r.ingredients || []).forEach((ing) => {
+        const name = translateFoodName(ing.n);
+        let amount = scaleAmount(ing.a, factor);
+        amount = _normalizeIngredientUnit(name, amount);
+        const key = foodKey(name);
+        const existing = DB.groceries.find((g) => foodKey(g.n) === key);
+        if (existing) {
+          existing.a = mergeAmounts(existing.a, amount);
+          merged++;
+        } else {
+          const store = guessStore(name);
+          DB.groceries.push({
+            id: uid(), n: name, a: amount, cat: guessCategory(name),
+            store, price: estimatePrice(name, store), checked: false, fromPlan: true,
+          });
+          added++;
+        }
+      });
     });
   });
+
   if (added + merged) {
     Data.persist('groceries');
     toast(`${added + merged} Zutat(en) auf die Einkaufsliste übernommen.`);
