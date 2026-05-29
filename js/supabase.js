@@ -167,10 +167,13 @@ const Data = {
         // Nutzers, der vorher auf diesem Browser eingeloggt war.
         DB.settings = defaultSettings();
         DB.onboardingDone = false;
-        this.client.from('profiles').upsert({
-          id: uidv, email: this.user.email, settings: DB.settings,
-          onboarding_done: false, updated_at: new Date().toISOString(),
-        }).catch(() => {});
+        try {
+          const { error: upErr } = await this.client.from('profiles').upsert({
+            id: uidv, email: this.user.email, settings: DB.settings,
+            onboarding_done: false, updated_at: new Date().toISOString(),
+          });
+          if (upErr) console.warn('Profil-Upsert fehlgeschlagen:', upErr);
+        } catch (e) { console.warn('Profil-Upsert fehlgeschlagen:', e); }
       }
     } catch (e) { console.warn('Profil laden fehlgeschlagen:', e); }
 
