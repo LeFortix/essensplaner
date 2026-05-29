@@ -218,29 +218,90 @@ function foodKey(name) {
   return main + (color ? '#' + color : '') + (mod ? '#' + mod : '');
 }
 
-/* Führt zwei Mengenangaben zusammen – bei gleicher Einheit
-   wird addiert, sonst werden beide gezeigt. */
+/* Führt mehrere Mengenangaben zusammen. Pro Einheits-Gruppe wird addiert;
+   verschiedene Einheiten bleiben nebeneinander stehen ("2 kg + 12 Stück").
+   kg/g und l/ml werden automatisch in eine Einheit umgerechnet. */
 const _UNIT_NORM = { dosen: 'dose', stücke: 'stück', stücken: 'stück', scheiben: 'scheibe', zehen: 'zehe', tassen: 'tasse' };
-function _normUnit(u) { const l = u.toLowerCase(); return _UNIT_NORM[l] || l; }
+function _normUnit(u) { const l = (u || '').toLowerCase().trim(); return _UNIT_NORM[l] || l; }
+
+// Stück-Synonyme werden alle als 'stück' gefuehrt, damit auch
+// "2 Zwiebeln" + "1 Stück" + "3" zu "6 Stück" wird.
+const _PIECE_UNITS = new Set(['', 'stück', 'stk', 'stk.', 'pcs']);
+
+// Mass-Konvertierungen: alles in Basis-Einheit speichern, am Ende
+// hochrechnen wenn sinnvoll.
+const _MASS_CONV = {
+  g:   { base: 'g',  factor: 1    },
+  gr:  { base: 'g',  factor: 1    },
+  kg:  { base: 'g',  factor: 1000 },
+  ml:  { base: 'ml', factor: 1    },
+  cl:  { base: 'ml', factor: 10   },
+  dl:  { base: 'ml', factor: 100  },
+  l:   { base: 'ml', factor: 1000 },
+};
+
+function _formatMass(totalBase, baseUnit) {
+  // > 1000 → in kg/l, sonst in g/ml
+  if (totalBase >= 1000) {
+    const big = totalBase / 1000;
+    const rounded = big >= 10 ? Math.round(big) : Math.round(big * 10) / 10;
+    return rounded + ' ' + (baseUnit === 'g' ? 'kg' : 'l');
+  }
+  const rounded = totalBase >= 50 ? Math.round(totalBase / 5) * 5 : Math.max(1, Math.round(totalBase));
+  return rounded + ' ' + baseUnit;
+}
 
 function mergeAmounts(a1, a2) {
   a1 = String(a1 || '').trim();
   a2 = String(a2 || '').trim();
   if (!a1) return a2;
   if (!a2) return a1;
-  // Alle Summanden aufsplitten (falls bereits "X + Y" vorhanden)
   const parts = [...a1.split('+'), ...a2.split('+')].map((s) => s.trim()).filter(Boolean);
-  let total = 0, displayUnit = null, unitNorm = null;
+
+  // Gruppen sammeln: { groupKey -> { total, displayUnit, isMass?, baseUnit? } }
+  // Reihenfolge der Gruppen bewahren wir mit einem Array
+  const order = [];
+  const groups = {};
+  const addGroup = (key, init) => { if (!groups[key]) { groups[key] = init; order.push(key); } };
+
   for (const part of parts) {
     const m = part.match(/^([\d.,]+)\s*(.*)$/);
-    if (!m) return a1 + ' + ' + a2;
-    const u = m[2].trim();
+    if (!m) {
+      // Nicht parsebar — als eigene "raw"-Gruppe einreihen, einmalig
+      addGroup('__raw__' + part, { total: 0, displayUnit: part, raw: true });
+      continue;
+    }
+    const u = (m[2] || '').trim();
     const uN = _normUnit(u);
-    if (unitNorm === null) { unitNorm = uN; displayUnit = u; }
-    else if (unitNorm !== uN) return a1 + ' + ' + a2;
-    total += parseFloat(m[1].replace(',', '.'));
+    const val = parseFloat(m[1].replace(',', '.'));
+    if (!isFinite(val)) { addGroup('__raw__' + part, { total: 0, displayUnit: part, raw: true }); continue; }
+
+    if (_PIECE_UNITS.has(uN)) {
+      addGroup('piece', { total: 0, displayUnit: 'Stück' });
+      groups.piece.total += val;
+      continue;
+    }
+    const conv = _MASS_CONV[uN];
+    if (conv) {
+      const k = 'mass_' + conv.base;
+      addGroup(k, { total: 0, isMass: true, baseUnit: conv.base });
+      groups[k].total += val * conv.factor;
+      continue;
+    }
+    // Andere Einheiten (EL, TL, Bund, Prise…): pro Einheit eine Gruppe
+    addGroup('unit_' + uN, { total: 0, displayUnit: u || uN });
+    groups['unit_' + uN].total += val;
   }
-  return (Math.round(total * 100) / 100) + (displayUnit ? ' ' + displayUnit : '');
+
+  // Ausgabe rendern
+  const out = order.map((k) => {
+    const g = groups[k];
+    if (g.raw) return g.displayUnit;
+    if (g.isMass) return _formatMass(g.total, g.baseUnit);
+    const rounded = Math.round(g.total * 100) / 100;
+    return rounded + (g.displayUnit ? ' ' + g.displayUnit : '');
+  });
+  return out.join(' + ');
 }
 
 function lookupFoodPrice(name) {
