@@ -415,6 +415,24 @@ function migrateData() {
       DB.recipes.push(Object.assign({}, def));
     }
   });
+
+  // Einmalige Bereinigung: alte defaultGroceries-Karteileichen entfernen.
+  // Die Funktion legte frueher Eintraege wie '2x500 g Magerquark' an, die
+  // beim Plan-Reset NIE geloescht wurden und sich permanent zu echten
+  // Plan-Zutaten aufaddierten (Magerquark, Skyr, Eier, Zwiebeln dauerhaft
+  // 2-3x zu hoch). Wir loeschen nur Eintraege, die exakt den Default-Namen
+  // tragen und vom Nutzer NICHT angehakt wurden — angehakte/edited Items
+  // bleiben unangetastet.
+  if (DB.settings && !DB.settings._defaultGroceriesCleanedV1
+      && typeof _LEGACY_DEFAULT_GROCERY_NAMES !== 'undefined') {
+    DB.groceries = DB.groceries.filter((g) => {
+      if (!g) return false;
+      if (g.checked) return true;
+      if (g.fromPlan) return true;
+      return !_LEGACY_DEFAULT_GROCERY_NAMES.has(g.n);
+    });
+    DB.settings._defaultGroceriesCleanedV1 = true;
+  }
 }
 
 function defaultRecipes() {
@@ -1002,22 +1020,20 @@ function defaultPantry() {
   ];
 }
 
+// Frueher legte diese Funktion eine Beispiel-Einkaufsliste mit fixen Mengen
+// an ('2x500 g Magerquark' etc.). Diese Eintraege hatten kein fromPlan-Flag,
+// wurden beim Plan-Reset NICHT geloescht und addierten sich permanent zu den
+// echten Plan-Zutaten dazu — daher waren Magerquark/Skyr/Eier/Zwiebeln
+// dauerhaft 2-3x zu hoch. Neue Nutzer starten jetzt mit leerer Liste.
 function defaultGroceries() {
-  const mk = (n, a, cat, store, price) => ({ id: uid(), n, a, cat, store, price, checked: false });
-  return [
-    mk('Rote Linsen', '1 kg', 'Hülsenfrüchte', 'comp', '1,49 €'),
-    mk('Kichererbsen (Dose, 4×)', '4×400 g', 'Hülsenfrüchte', 'comp', '1,96 €'),
-    mk('Haferflocken', '2 kg', 'Getreide', 'comp', '1,59 €'),
-    mk('Basmati Reis', '2 kg', 'Getreide', 'comp', '2,99 €'),
-    mk('Tomaten (Dose, 4×)', '4×400 g', 'Konserven', 'comp', '2,80 €'),
-    mk('Kokosmilch (2×)', '2×400 ml', 'Konserven', 'comp', '1,98 €'),
-    mk('Skyr', '4×500 g', 'Milchprodukte', 'home', 'CHF 12.80'),
-    mk('Magerquark', '2×500 g', 'Milchprodukte', 'home', 'CHF 4.20'),
-    mk('Tofu (fest)', '2×400 g', 'Proteinquellen', 'home', 'CHF 6.40'),
-    mk('Eier', '10 Stück', 'Proteinquellen', 'home', 'CHF 4.50'),
-    mk('Brokkoli', '2 Köpfe', 'Gemüse', 'home', 'CHF 4.20'),
-    mk('Paprika (bunt)', '4 Stück', 'Gemüse', 'home', 'CHF 3.60'),
-    mk('Gefrorene Beeren', '1 kg', 'TK', 'comp', '2,49 €'),
-    mk('Zwiebeln', '2 kg', 'Gemüse', 'home', 'CHF 1.20'),
-  ];
+  return [];
 }
+
+// Namen der frueheren Default-Eintraege. Werden in migrateData() einmalig
+// aufgeraeumt, falls Altdaten in der Liste herumliegen.
+const _LEGACY_DEFAULT_GROCERY_NAMES = new Set([
+  'Rote Linsen', 'Kichererbsen (Dose, 4×)', 'Haferflocken', 'Basmati Reis',
+  'Tomaten (Dose, 4×)', 'Kokosmilch (2×)', 'Skyr', 'Magerquark',
+  'Tofu (fest)', 'Eier', 'Brokkoli', 'Paprika (bunt)', 'Gefrorene Beeren',
+  'Zwiebeln',
+]);
