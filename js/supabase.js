@@ -31,6 +31,22 @@ const COLLECTIONS = {
 /* ---------- localStorage-Helfer ---------- */
 function lsGet(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('localStorage voll?', e); } }
+function lsDel(k) { try { localStorage.removeItem(k); } catch {} }
+
+/* Scope-Suffix fuer den lokalen Cache. Wichtig fuer Multi-User-
+   Trennung: jeder Account bekommt eigene localStorage-Schluessel,
+   damit beim Wechsel zwischen Konten NIEMALS Daten eines anderen
+   Nutzers sichtbar werden.
+   - Cloud-Modus + eingeloggt -> '_<userId>'
+   - Local-Modus              -> '_local'
+   - sonst (Setup/Login-Screen, niemand angemeldet) -> null
+     -> in dem Zustand wird nichts gelesen/geschrieben. */
+function lsScope() {
+  if (typeof Data === 'undefined') return null;
+  if (Data.mode === 'cloud' && Data.user) return '_' + Data.user.id;
+  if (Data.mode === 'local') return '_local';
+  return null;
+}
 
 /* Eindeutige ID (auch offline stabil) */
 function uid() {
@@ -62,29 +78,73 @@ const Data = {
 
   /* ---------- Lokales Laden (Cache / Offline / Local-Modus) ---------- */
   loadLocal() {
-    DB.settings       = Object.assign(defaultSettings(), lsGet('ep_settings') || {});
-    DB.recipes        = lsGet('ep_recipes')   || defaultRecipes();
-    DB.mealplan       = lsGet('ep_mealplan')  || defaultPlan();
-    DB.groceries      = lsGet('ep_groceries') || defaultGroceries();
-    DB.pantry         = lsGet('ep_pantry')    || defaultPantry();
-    DB.priceData      = lsGet('ep_pricedata') || null;
-    DB.onboardingDone = lsGet('ep_onboarding') || false;
+    // Ohne Scope (kein User, kein Local-Modus) NICHTS aus dem
+    // localStorage holen – sonst koennten Daten eines anderen
+    // Nutzers in DB landen, der vorher auf diesem Browser war.
+    const s = lsScope();
+    if (!s) { this.resetDB(); return; }
+    DB.settings       = Object.assign(defaultSettings(), lsGet('ep_settings' + s) || {});
+    DB.recipes        = lsGet('ep_recipes' + s)   || defaultRecipes();
+    DB.mealplan       = lsGet('ep_mealplan' + s)  || defaultPlan();
+    DB.groceries      = lsGet('ep_groceries' + s) || defaultGroceries();
+    DB.pantry         = lsGet('ep_pantry' + s)    || defaultPantry();
+    DB.priceData      = lsGet('ep_pricedata' + s) || null;
+    DB.onboardingDone = lsGet('ep_onboarding' + s) || false;
     migrateData();
   },
 
+  /* Setzt DB im Speicher komplett auf Defaults zurueck.
+     Beruehrt localStorage NICHT. */
+  resetDB() {
+    DB.settings = defaultSettings();
+    DB.recipes = [];
+    DB.mealplan = [];
+    DB.groceries = [];
+    DB.pantry = [];
+    DB.priceData = null;
+    DB.onboardingDone = false;
+  },
+
+  /* Loescht alle Cache-Eintraege eines konkreten Scopes
+     (z.B. nach Logout). 'scope' ist '_<userId>' oder '_local'. */
+  clearScopedCache(scope) {
+    if (!scope) return;
+    ['ep_settings','ep_recipes','ep_mealplan','ep_groceries',
+     'ep_pantry','ep_pricedata','ep_onboarding', EP.OFFLINE_QUEUE_KEY]
+      .forEach((b) => lsDel(b + scope));
+  },
+
+  /* Einmalige Aufraeumaktion: aeltere App-Versionen schrieben den
+     localStorage-Cache OHNE User-Scope ('ep_recipes' statt
+     'ep_recipes_<uid>'). Diese Altdaten gehoeren keinem Konto mehr
+     zu und werden hier hart geloescht – nur Verbindungs-Keys und
+     der Setup-Modus bleiben erhalten. */
+  cleanupLegacyCache() {
+    if (lsGet('ep_legacy_cache_cleared')) return;
+    ['ep_settings','ep_recipes','ep_mealplan','ep_groceries',
+     'ep_pantry','ep_pricedata','ep_onboarding', EP.OFFLINE_QUEUE_KEY,
+     'ep_user']
+      .forEach((k) => lsDel(k));
+    try { localStorage.setItem('ep_legacy_cache_cleared', '1'); } catch {}
+  },
+
   saveLocalCollection(coll) {
-    if (coll === 'settings')  return lsSet('ep_settings', DB.settings);
-    if (coll === 'pricedata') return lsSet('ep_pricedata', DB.priceData);
-    if (COLLECTIONS[coll])    return lsSet(COLLECTIONS[coll].ls, DB[coll]);
+    const s = lsScope();
+    if (!s) return;
+    if (coll === 'settings')  return lsSet('ep_settings'  + s, DB.settings);
+    if (coll === 'pricedata') return lsSet('ep_pricedata' + s, DB.priceData);
+    if (COLLECTIONS[coll])    return lsSet(COLLECTIONS[coll].ls + s, DB[coll]);
   },
   saveLocalAll() {
-    lsSet('ep_settings', DB.settings);
-    lsSet('ep_recipes', DB.recipes);
-    lsSet('ep_mealplan', DB.mealplan);
-    lsSet('ep_groceries', DB.groceries);
-    lsSet('ep_pantry', DB.pantry);
-    lsSet('ep_pricedata', DB.priceData);
-    lsSet('ep_onboarding', DB.onboardingDone);
+    const s = lsScope();
+    if (!s) return;
+    lsSet('ep_settings'   + s, DB.settings);
+    lsSet('ep_recipes'    + s, DB.recipes);
+    lsSet('ep_mealplan'   + s, DB.mealplan);
+    lsSet('ep_groceries'  + s, DB.groceries);
+    lsSet('ep_pantry'     + s, DB.pantry);
+    lsSet('ep_pricedata'  + s, DB.priceData);
+    lsSet('ep_onboarding' + s, DB.onboardingDone);
   },
 
   /* ---------- Cloud: alles vom Server holen ---------- */
@@ -92,6 +152,7 @@ const Data = {
     if (!this.client || !this.user) return false;
     this.mode = 'cloud';
     const uidv = this.user.id;
+    const scope = '_' + uidv;
 
     // Profil / Einstellungen
     try {
@@ -99,23 +160,16 @@ const Data = {
         .from('profiles').select('settings,onboarding_done').eq('id', uidv).maybeSingle();
       if (prof) {
         DB.settings = Object.assign(defaultSettings(), prof.settings || {});
-        // localStorage als Fallback, falls Supabase-Sync zuvor ausgefallen ist
-        DB.onboardingDone = !!prof.onboarding_done || !!lsGet('ep_onboarding');
-        // Supabase nachholen, falls Wert dort noch fehlt
-        if (DB.onboardingDone && !prof.onboarding_done) {
-          this.client.from('profiles').upsert({
-            id: uidv, email: this.user.email, settings: DB.settings,
-            onboarding_done: true, updated_at: new Date().toISOString(),
-          }).catch(() => {});
-        }
+        DB.onboardingDone = !!prof.onboarding_done;
       } else {
-        // Noch kein Profil in Supabase – lokale Daten übernehmen
-        const lsSettings = lsGet('ep_settings');
-        DB.settings = lsSettings ? Object.assign(defaultSettings(), lsSettings) : defaultSettings();
-        DB.onboardingDone = !!lsGet('ep_onboarding');
+        // Kein Profil in Supabase -> FRISCHER Start fuer dieses Konto.
+        // KEIN Fallback auf localStorage: sonst leakt es Daten eines
+        // Nutzers, der vorher auf diesem Browser eingeloggt war.
+        DB.settings = defaultSettings();
+        DB.onboardingDone = false;
         this.client.from('profiles').upsert({
           id: uidv, email: this.user.email, settings: DB.settings,
-          onboarding_done: DB.onboardingDone, updated_at: new Date().toISOString(),
+          onboarding_done: false, updated_at: new Date().toISOString(),
         }).catch(() => {});
       }
     } catch (e) { console.warn('Profil laden fehlgeschlagen:', e); }
@@ -124,9 +178,9 @@ const Data = {
     const pendingQueue = this.getQueue();
     for (const [coll, cfg] of Object.entries(COLLECTIONS)) {
       try {
-        // Ausstehende lokale Änderungen haben Vorrang vor Supabase-Daten
+        // Ausstehende lokale Aenderungen DIESES Users haben Vorrang
         if (pendingQueue.includes(coll)) {
-          const local = lsGet(cfg.ls);
+          const local = lsGet(cfg.ls + scope);
           if (local) { DB[coll] = Array.isArray(local) ? local : defaultFor(coll); continue; }
         }
         const { data: row } = await this.client
@@ -139,11 +193,11 @@ const Data = {
         }
       } catch (e) {
         console.warn('Laden fehlgeschlagen:', coll, e);
-        DB[coll] = lsGet(cfg.ls) || defaultFor(coll);
+        DB[coll] = lsGet(cfg.ls + scope) || defaultFor(coll);
       }
     }
 
-    DB.priceData = lsGet('ep_pricedata') || null;
+    DB.priceData = lsGet('ep_pricedata' + scope) || null;
     migrateData();
     this.saveLocalAll();
     return true;
@@ -189,7 +243,8 @@ const Data = {
 
   async persistSettings() {
     this.saveLocalCollection('settings');
-    lsSet('ep_onboarding', DB.onboardingDone);
+    const s = lsScope();
+    if (s) lsSet('ep_onboarding' + s, DB.onboardingDone);
     if (this.mode !== 'cloud') return;
     if (navigator.onLine && this.client && this.user) {
       try { await this.pushSettings(); }
@@ -199,17 +254,22 @@ const Data = {
     }
   },
 
-  /* ---------- Offline-Queue ---------- */
-  getQueue() { return lsGet(EP.OFFLINE_QUEUE_KEY) || []; },
+  /* ---------- Offline-Queue (pro Nutzer getrennt) ---------- */
+  queueKey() { const s = lsScope(); return s ? EP.OFFLINE_QUEUE_KEY + s : null; },
+  getQueue() { const k = this.queueKey(); return k ? (lsGet(k) || []) : []; },
   enqueue(coll) {
-    const q = this.getQueue();
+    const k = this.queueKey();
+    if (!k) return;
+    const q = lsGet(k) || [];
     if (!q.includes(coll)) q.push(coll);
-    lsSet(EP.OFFLINE_QUEUE_KEY, q);
+    lsSet(k, q);
     if (window.updateSyncBadge) updateSyncBadge();
   },
   async flushQueue() {
     if (this.mode !== 'cloud' || !navigator.onLine || !this.client || !this.user) return;
-    const q = this.getQueue();
+    const k = this.queueKey();
+    if (!k) return;
+    const q = lsGet(k) || [];
     if (!q.length) return;
     const stillPending = [];
     for (const coll of q) {
@@ -218,7 +278,7 @@ const Data = {
         else await this.pushCollection(coll);
       } catch (e) { stillPending.push(coll); }
     }
-    lsSet(EP.OFFLINE_QUEUE_KEY, stillPending);
+    lsSet(k, stillPending);
     if (window.updateSyncBadge) updateSyncBadge();
     if (!stillPending.length && window.toast) toast('Offline-Änderungen synchronisiert.');
   },
